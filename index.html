@@ -1,0 +1,1285 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <title>PeerSpace — Private P2P Chat</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- PeerJS: WebRTC signaling and peer connections -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <style>
+    body {
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      background: #080d18;
+      color: #e5e7eb;
+    }
+
+    .glass {
+      background: rgba(17, 24, 39, .88);
+      border: 1px solid rgba(148, 163, 184, .14);
+      backdrop-filter: blur(16px);
+    }
+
+    .field {
+      width: 100%;
+      background: #0b1220;
+      border: 1px solid #293449;
+      border-radius: 12px;
+      padding: 12px 14px;
+      outline: none;
+      color: #f8fafc;
+      transition: border-color .2s;
+    }
+
+    .field:focus {
+      border-color: #818cf8;
+    }
+
+    .btn {
+      border-radius: 11px;
+      padding: 10px 14px;
+      font-weight: 600;
+      transition: opacity .2s, transform .2s;
+    }
+
+    .btn:active { transform: scale(.98); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    .primary { background: #6366f1; color: white; }
+    .secondary { background: #202b3e; color: #e2e8f0; }
+    .danger { background: #991b1b; color: white; }
+
+    #messages {
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #374151 transparent;
+    }
+
+    .bubble {
+      max-width: 86%;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    .bubble-mine {
+      background: #4f46e5;
+      color: white;
+      border-radius: 16px 16px 4px 16px;
+    }
+
+    .bubble-theirs {
+      background: #202b3e;
+      color: #f1f5f9;
+      border-radius: 16px 16px 16px 4px;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #030712;
+    }
+
+    .video-tile {
+      min-height: 150px;
+      aspect-ratio: 16 / 10;
+      position: relative;
+      overflow: hidden;
+      background: #030712;
+      border-radius: 14px;
+      border: 1px solid #293449;
+    }
+
+    .tile-label {
+      position: absolute;
+      bottom: 9px;
+      left: 9px;
+      background: rgba(0,0,0,.65);
+      padding: 4px 8px;
+      border-radius: 7px;
+      font-size: 11px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      display: inline-block;
+      border-radius: 50%;
+      background: #64748b;
+    }
+
+    .dot.online {
+      background: #34d399;
+      box-shadow: 0 0 8px #34d39955;
+    }
+
+    #toast {
+      transition: opacity .2s;
+    }
+  </style>
+</head>
+
+<body class="min-h-screen">
+
+  <!-- PASSWORD GATE -->
+  <section id="passwordScreen"
+    class="min-h-screen flex items-center justify-center p-5">
+
+    <div class="glass rounded-3xl p-7 sm:p-10 w-full max-w-md shadow-2xl">
+      <div class="flex justify-center mb-6">
+        <div class="h-16 w-16 rounded-2xl bg-indigo-500/15 flex items-center justify-center">
+          <svg class="w-9 h-9 text-indigo-400" fill="none"
+            stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+              d="M8 11V7a4 4 0 1 1 8 0v4m-9 0h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2Z"/>
+          </svg>
+        </div>
+      </div>
+
+      <h1 class="text-3xl font-bold text-center tracking-tight">PeerSpace</h1>
+      <p class="text-slate-400 text-center mt-2 mb-8">
+        Your private, peer-to-peer conversation.
+      </p>
+
+      <form id="passwordForm">
+        <label for="passwordInput"
+          class="block text-sm text-slate-300 mb-2">Session password</label>
+
+        <input id="passwordInput" type="password" class="field"
+          placeholder="Enter password" autocomplete="current-password"
+          required>
+
+        <p id="passwordError" class="text-red-400 text-sm mt-2 hidden">
+          Incorrect password. Please try again.
+        </p>
+
+        <button type="submit" class="btn primary w-full mt-5">
+          Unlock PeerSpace →
+        </button>
+      </form>
+
+      <p class="text-xs text-slate-500 text-center mt-6">
+        This is a client-side password gate, not secure authentication.
+      </p>
+    </div>
+  </section>
+
+  <!-- MAIN APPLICATION -->
+  <main id="app" class="hidden min-h-screen">
+
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-950/80">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-indigo-500 flex items-center justify-center font-bold text-xl">
+            P
+          </div>
+          <div>
+            <h1 class="font-bold text-lg">PeerSpace</h1>
+            <p class="text-xs text-slate-400">One-to-one communication</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 text-xs sm:text-sm">
+          <span id="statusDot" class="dot"></span>
+          <span id="peerStatus" class="text-slate-400">Initializing…</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="max-w-7xl mx-auto p-4 sm:p-6">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+
+        <!-- Sidebar -->
+        <aside class="lg:col-span-4 space-y-5">
+
+          <!-- Identity -->
+          <section class="glass rounded-2xl p-5">
+            <h2 class="font-semibold text-lg">Your identity</h2>
+            <p class="text-sm text-slate-400 mt-1">
+              Share your Peer ID with the person you want to contact.
+            </p>
+
+            <div class="mt-4">
+              <label class="text-xs text-slate-400 block mb-2">YOUR PEER ID</label>
+              <div class="flex gap-2">
+                <input id="myPeerId" class="field text-sm min-w-0"
+                  readonly placeholder="Generating ID…">
+                <button id="copyIdBtn" class="btn secondary shrink-0"
+                  type="button">Copy</button>
+              </div>
+            </div>
+
+            <div class="mt-5 pt-5 border-t border-slate-800">
+              <label for="remotePeerId"
+                class="text-xs text-slate-400 block mb-2">CONNECT TO A PEER</label>
+
+              <input id="remotePeerId" class="field"
+                placeholder="Paste their Peer ID">
+
+              <button id="connectBtn" class="btn primary w-full mt-3"
+                type="button" disabled>
+                Connect to peer
+              </button>
+
+              <p id="connectionMessage" role="status"
+                class="text-sm text-slate-400 mt-3">
+                Waiting for your Peer ID…
+              </p>
+            </div>
+          </section>
+
+          <!-- Call Controls -->
+          <section class="glass rounded-2xl p-5">
+            <h2 class="font-semibold text-lg">Audio & video</h2>
+            <p class="text-sm text-slate-400 mt-1">
+              Connect to a peer before starting a call.
+            </p>
+
+            <div class="grid grid-cols-2 gap-3 mt-5">
+              <button id="videoCallBtn"
+                class="btn primary flex items-center justify-center gap-2"
+                type="button" disabled>
+                <span>▣</span> Video call
+              </button>
+
+              <button id="audioCallBtn"
+                class="btn secondary flex items-center justify-center gap-2"
+                type="button" disabled>
+                <span>☎</span> Audio call
+              </button>
+            </div>
+
+            <div id="callPanel" class="hidden mt-5 space-y-3">
+              <p id="callStatus" class="text-sm text-emerald-400">
+                Call in progress
+              </p>
+
+              <div id="videoGrid" class="grid grid-cols-1 gap-3">
+                <div id="remoteTile" class="video-tile hidden">
+                  <video id="remoteVideo" autoplay playsinline></video>
+                  <div class="tile-label">Remote peer</div>
+                </div>
+
+                <div id="localTile" class="video-tile hidden">
+                  <video id="localVideo" autoplay muted playsinline></video>
+                  <div class="tile-label">You</div>
+                </div>
+              </div>
+
+              <div id="audioOnlyNotice"
+                class="hidden text-center py-5 text-slate-300">
+                <div class="text-4xl mb-2">☎</div>
+                <p>Audio call active</p>
+              </div>
+
+              <audio id="remoteAudio" autoplay playsinline></audio>
+
+              <div class="grid grid-cols-2 gap-3">
+                <button id="micBtn" class="btn secondary" type="button">
+                  Mute mic
+                </button>
+                <button id="cameraBtn" class="btn secondary" type="button">
+                  Turn camera off
+                </button>
+              </div>
+
+              <button id="endCallBtn" class="btn danger w-full"
+                type="button">End call</button>
+            </div>
+
+            <p class="text-xs text-slate-500 mt-4">
+              Your browser will ask for microphone/camera permission.
+              Use HTTPS for deployed pages.
+            </p>
+          </section>
+
+          <!-- Privacy -->
+          <section class="rounded-2xl border border-indigo-400/20 bg-indigo-500/5 p-4">
+            <h3 class="font-medium text-indigo-300 text-sm">Session privacy</h3>
+            <p class="text-xs leading-5 text-slate-400 mt-2">
+              Chat messages are held in page memory only. Refreshing or
+              closing the page clears the displayed history. PeerJS signaling
+              and network infrastructure are still required to establish
+              connections.
+            </p>
+          </section>
+        </aside>
+
+        <!-- Chat -->
+        <section class="lg:col-span-8 glass rounded-2xl flex flex-col min-h-[620px] lg:h-[calc(100vh-125px)] lg:min-h-[650px]">
+
+          <div class="p-5 border-b border-slate-800 flex items-center justify-between gap-3">
+            <div>
+              <h2 class="font-semibold text-lg">Messages</h2>
+              <p id="chatSubtitle" class="text-sm text-slate-400 mt-1">
+                Connect to someone to start chatting.
+              </p>
+            </div>
+            <button id="clearChatBtn" type="button"
+              class="text-xs text-slate-400 hover:text-white">
+              Clear my chat
+            </button>
+          </div>
+
+          <div id="messages" class="flex-1 p-4 sm:p-5 space-y-4">
+            <div id="emptyState" class="h-full min-h-[300px] flex flex-col items-center justify-center text-center">
+              <div class="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center text-3xl mb-4">
+                ☁
+              </div>
+              <h3 class="font-medium text-slate-200">A fresh conversation</h3>
+              <p class="text-sm text-slate-500 max-w-xs mt-2">
+                Connect to another peer. Your conversation will appear here
+                without being saved to a database.
+              </p>
+            </div>
+          </div>
+
+          <div class="border-t border-slate-800 p-4 sm:p-5">
+            <form id="messageForm">
+              <label for="messageInput" class="sr-only">Your message</label>
+              <textarea id="messageInput" class="field resize-none"
+                rows="2" maxlength="10000"
+                placeholder="Write a message… (Enter to send, Shift+Enter for a new line)"
+                disabled></textarea>
+
+              <div class="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between mt-3">
+                <p class="text-xs text-slate-500">
+                  Ghost Send sends without adding the message to your chat.
+                </p>
+
+                <div class="flex gap-2">
+                  <button id="ghostSendBtn" class="btn secondary flex-1 sm:flex-none"
+                    type="button" disabled>👻 Ghost Send</button>
+                  <button id="sendBtn" class="btn primary flex-1 sm:flex-none"
+                    type="submit" disabled>Send ↑</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"
+    class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden max-w-[90vw] rounded-xl bg-slate-100 text-slate-900 text-sm font-medium px-5 py-3 shadow-2xl">
+  </div>
+
+  <script>
+    "use strict";
+
+    // -------------------------------------------------------
+    // CONFIGURATION
+    // -------------------------------------------------------
+
+    const APP_PASSWORD = "2021";
+
+    // Maximum number of messages retained in the local page.
+    // Nothing is written to localStorage, sessionStorage or a database.
+    const MAX_MESSAGES = 300;
+
+    // -------------------------------------------------------
+    // ELEMENTS
+    // -------------------------------------------------------
+
+    const $ = (id) => document.getElementById(id);
+
+    const passwordScreen = $("passwordScreen");
+    const passwordForm = $("passwordForm");
+    const passwordInput = $("passwordInput");
+    const passwordError = $("passwordError");
+    const app = $("app");
+
+    const myPeerId = $("myPeerId");
+    const remotePeerId = $("remotePeerId");
+    const copyIdBtn = $("copyIdBtn");
+    const connectBtn = $("connectBtn");
+    const peerStatus = $("peerStatus");
+    const statusDot = $("statusDot");
+    const connectionMessage = $("connectionMessage");
+
+    const messages = $("messages");
+    const emptyState = $("emptyState");
+    const chatSubtitle = $("chatSubtitle");
+    const messageForm = $("messageForm");
+    const messageInput = $("messageInput");
+    const sendBtn = $("sendBtn");
+    const ghostSendBtn = $("ghostSendBtn");
+    const clearChatBtn = $("clearChatBtn");
+
+    const videoCallBtn = $("videoCallBtn");
+    const audioCallBtn = $("audioCallBtn");
+    const callPanel = $("callPanel");
+    const callStatus = $("callStatus");
+    const videoGrid = $("videoGrid");
+    const remoteTile = $("remoteTile");
+    const localTile = $("localTile");
+    const remoteVideo = $("remoteVideo");
+    const localVideo = $("localVideo");
+    const remoteAudio = $("remoteAudio");
+    const audioOnlyNotice = $("audioOnlyNotice");
+    const endCallBtn = $("endCallBtn");
+    const micBtn = $("micBtn");
+    const cameraBtn = $("cameraBtn");
+
+    // -------------------------------------------------------
+    // APPLICATION STATE
+    // -------------------------------------------------------
+
+    let peer = null;
+    let dataConnection = null;
+    let connectedPeerId = null;
+
+    let currentCall = null;
+    let localStream = null;
+    let remoteStream = null;
+    let activeCallType = null;
+
+    let isMicMuted = false;
+    let isCameraOff = false;
+    let toastTimer = null;
+
+    // -------------------------------------------------------
+    // HELPERS
+    // -------------------------------------------------------
+
+    function toast(message) {
+      const element = $("toast");
+      element.textContent = message;
+      element.classList.remove("hidden");
+      element.style.opacity = "1";
+
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        element.style.opacity = "0";
+        setTimeout(() => element.classList.add("hidden"), 220);
+      }, 2800);
+    }
+
+    function setPeerStatus(text, online = false) {
+      peerStatus.textContent = text;
+      statusDot.classList.toggle("online", online);
+    }
+
+    function setConnectionMessage(text) {
+      connectionMessage.textContent = text;
+    }
+
+    function setConnectedUI(connected) {
+      const ready = connected && dataConnection &&
+        dataConnection.open;
+
+      messageInput.disabled = !ready;
+      sendBtn.disabled = !ready;
+      ghostSendBtn.disabled = !ready;
+
+      videoCallBtn.disabled = !ready || !!currentCall;
+      audioCallBtn.disabled = !ready || !!currentCall;
+      connectBtn.disabled = !peer || peer.destroyed;
+
+      chatSubtitle.textContent = ready
+        ? "Connected securely through a peer data channel."
+        : "Connect to someone to start chatting.";
+
+      if (ready) {
+        setPeerStatus("Peer connected", true);
+      } else if (peer && !peer.destroyed) {
+        setPeerStatus("Ready to connect", false);
+      }
+    }
+
+    function sendPacket(packet) {
+      if (!dataConnection || !dataConnection.open) {
+        toast("Your peer is not connected.");
+        return false;
+      }
+
+      try {
+        dataConnection.send(packet);
+        return true;
+      } catch (error) {
+        console.error("Data channel send error:", error);
+        toast("Message could not be sent.");
+        return false;
+      }
+    }
+
+    function formatTime() {
+      return new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    function updateEmptyState() {
+      const hasMessages = messages.querySelector("[data-message-id]");
+      emptyState.classList.toggle("hidden", !!hasMessages);
+    }
+
+    // -------------------------------------------------------
+    // PASSWORD GATE
+    // -------------------------------------------------------
+
+    passwordForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+
+      if (passwordInput.value !== APP_PASSWORD) {
+        passwordError.classList.remove("hidden");
+        passwordInput.select();
+        return;
+      }
+
+      passwordError.classList.add("hidden");
+      passwordScreen.classList.add("hidden");
+      app.classList.remove("hidden");
+
+      // Peer initialization happens only after the password is accepted.
+      initializePeer();
+    });
+
+    passwordInput.addEventListener("input", () => {
+      passwordError.classList.add("hidden");
+    });
+
+    // -------------------------------------------------------
+    // PEERJS INITIALIZATION
+    // -------------------------------------------------------
+
+    function initializePeer() {
+      if (typeof Peer === "undefined") {
+        setPeerStatus("Library unavailable");
+        setConnectionMessage(
+          "PeerJS could not load. Check your internet connection and reload."
+        );
+        toast("PeerJS library could not be loaded.");
+        return;
+      }
+
+      setPeerStatus("Initializing…");
+      setConnectionMessage("Generating your Peer ID…");
+
+      try {
+        // PeerJS uses its public signaling infrastructure by default.
+        // This application does not operate its own signaling server.
+        peer = new Peer(undefined, {
+          debug: 1
+        });
+
+        peer.on("open", (id) => {
+          myPeerId.value = id;
+          setPeerStatus("Ready to connect", false);
+          setConnectionMessage(
+            "Your ID is ready. Share it or enter another peer's ID."
+          );
+          connectBtn.disabled = false;
+        });
+
+        peer.on("connection", (connection) => {
+          handleDataConnection(connection);
+        });
+
+        peer.on("call", (call) => {
+          // Incoming calls are answered automatically after requesting
+          // the required microphone/camera permissions.
+          handleIncomingCall(call);
+        });
+
+        peer.on("disconnected", () => {
+          setPeerStatus("Signaling disconnected", false);
+          setConnectionMessage(
+            "Signaling disconnected. Attempting to reconnect…"
+          );
+
+          if (peer && !peer.destroyed) {
+            try {
+              peer.reconnect();
+            } catch (error) {
+              console.error("Peer reconnect failed:", error);
+            }
+          }
+        });
+
+        peer.on("close", () => {
+          setPeerStatus("Peer closed", false);
+        });
+
+        peer.on("error", (error) => {
+          console.error("PeerJS error:", error);
+
+          const messagesByType = {
+            "peer-unavailable": "That Peer ID is unavailable.",
+            "network": "A network error occurred.",
+            "server-error": "The signaling server reported an error.",
+            "socket-error": "Signaling connection failed.",
+            "socket-closed": "The signaling connection was closed.",
+            "unavailable-id": "This Peer ID is already in use."
+          };
+
+          const text = messagesByType[error.type] ||
+            (error.message || "An unexpected connection error occurred.");
+
+          setConnectionMessage(text);
+          toast(text);
+        });
+
+      } catch (error) {
+        console.error("Peer initialization failed:", error);
+        setPeerStatus("Initialization failed");
+        setConnectionMessage("Could not initialize PeerJS.");
+      }
+    }
+
+    // -------------------------------------------------------
+    // CONNECTING TO A PEER
+    // -------------------------------------------------------
+
+    function connectToPeer() {
+      if (!peer || peer.destroyed || !peer.open) {
+        toast("Your Peer ID is not ready yet.");
+        return;
+      }
+
+      const targetId = remotePeerId.value.trim();
+
+      if (!targetId) {
+        toast("Enter the other person's Peer ID.");
+        remotePeerId.focus();
+        return;
+      }
+
+      if (targetId === peer.id) {
+        toast("You cannot connect to your own Peer ID.");
+        return;
+      }
+
+      if (dataConnection && dataConnection.open &&
+          connectedPeerId === targetId) {
+        toast("Already connected to this peer.");
+        return;
+      }
+
+      if (currentCall) {
+        toast("End the current call before changing peers.");
+        return;
+      }
+
+      if (dataConnection) {
+        try { dataConnection.close(); } catch (_) {}
+      }
+
+      connectedPeerId = targetId;
+      setConnectionMessage("Connecting to peer…");
+      setPeerStatus("Connecting…", false);
+      setConnectedUI(false);
+
+      try {
+        const connection = peer.connect(targetId, {
+          reliable: true,
+          serialization: "json",
+          metadata: { app: "PeerSpace" }
+        });
+
+        handleDataConnection(connection);
+      } catch (error) {
+        console.error("Could not connect:", error);
+        connectedPeerId = null;
+        setConnectionMessage("Could not start the connection.");
+        toast("Could not connect to peer.");
+      }
+    }
+
+    connectBtn.addEventListener("click", connectToPeer);
+
+    remotePeerId.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        connectToPeer();
+      }
+    });
+
+    copyIdBtn.addEventListener("click", async () => {
+      const id = myPeerId.value;
+
+      if (!id) {
+        toast("Your Peer ID is not ready yet.");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(id);
+        toast("Peer ID copied!");
+      } catch (_) {
+        // Clipboard API may require HTTPS or browser permission.
+        myPeerId.focus();
+        myPeerId.select();
+
+        try {
+          const copied = document.execCommand("copy");
+          toast(copied
+            ? "Peer ID copied!"
+            : "Select and copy your Peer ID manually.");
+        } catch (_) {
+          toast("Select and copy your Peer ID manually.");
+        }
+      }
+    });
+
+    // -------------------------------------------------------
+    // DATA CONNECTION / MESSAGING
+    // -------------------------------------------------------
+
+    function handleDataConnection(connection) {
+      if (!connection) return;
+
+      // Accept only one active chat peer at a time.
+      if (dataConnection && dataConnection !== connection &&
+          dataConnection.open) {
+        if (connection.peer !== connectedPeerId) {
+          connection.close();
+          return;
+        }
+      }
+
+      dataConnection = connection;
+      connectedPeerId = connection.peer;
+
+      connection.on("open", () => {
+        connectedPeerId = connection.peer;
+        remotePeerId.value = connection.peer;
+
+        setConnectionMessage("Connected to " + connection.peer);
+        setConnectedUI(true);
+        toast("Peer connected!");
+      });
+
+      connection.on("data", (packet) => {
+        handleIncomingPacket(packet);
+      });
+
+      connection.on("close", () => {
+        if (dataConnection !== connection) return;
+
+        dataConnection = null;
+        connectedPeerId = null;
+
+        setConnectedUI(false);
+        setConnectionMessage("Connection closed. Reconnect to chat.");
+        setPeerStatus("Disconnected", false);
+
+        if (currentCall) {
+          finishCall(false);
+        }
+
+        toast("Peer disconnected.");
+      });
+
+      connection.on("error", (error) => {
+        console.error("Data connection error:", error);
+        setConnectionMessage("Data connection error.");
+      });
+
+      // An incoming data connection may already be open.
+      if (connection.open) {
+        connectedPeerId = connection.peer;
+        remotePeerId.value = connection.peer;
+        setConnectedUI(true);
+      }
+    }
+
+    function handleIncomingPacket(packet) {
+      if (!packet || typeof packet !== "object") return;
+
+      if (packet.type === "chat") {
+        if (typeof packet.text !== "string") return;
+        if (packet.text.length > 10000) return;
+
+        // Ghost Send is intentionally indistinguishable to the receiver.
+        // The sender simply does not create a local message bubble.
+        addMessage({
+          text: packet.text,
+          mine: false,
+          time: formatTime()
+        });
+      }
+    }
+
+    let messageSequence = 0;
+
+    function addMessage({ text, mine, time }) {
+      // Keep message history bounded without saving it to persistent storage.
+      const existing = messages.querySelectorAll("[data-message-id]");
+
+      if (existing.length >= MAX_MESSAGES) {
+        existing[0].remove();
+      }
+
+      const row = document.createElement("div");
+      row.className = "flex " + (mine ? "justify-end" : "justify-start");
+      row.dataset.messageId = String(++messageSequence);
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "bubble " +
+        (mine ? "bubble-mine" : "bubble-theirs") +
+        " px-4 py-3";
+
+      const sender = document.createElement("div");
+      sender.className = "text-xs font-semibold mb-2 opacity-80";
+      sender.textContent = mine ? "You" : "Peer";
+
+      const body = document.createElement("div");
+      body.textContent = text;
+
+      const footer = document.createElement("div");
+      footer.className = "flex items-center justify-between gap-4 mt-3 text-[10px] opacity-70";
+
+      const timeElement = document.createElement("span");
+      timeElement.textContent = time || formatTime();
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "underline hover:opacity-100";
+      deleteButton.textContent = "Delete for me";
+      deleteButton.setAttribute(
+        "aria-label",
+        "Delete this message from your screen only"
+      );
+
+      deleteButton.addEventListener("click", () => {
+        // This only removes this local DOM element. It sends no delete packet.
+        row.remove();
+        updateEmptyState();
+      });
+
+      footer.append(timeElement, deleteButton);
+      wrapper.append(sender, body, footer);
+      row.appendChild(wrapper);
+      messages.appendChild(row);
+
+      updateEmptyState();
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function sendMessage(ghost = false) {
+      if (!dataConnection || !dataConnection.open) {
+        toast("Connect to a peer before sending.");
+        return;
+      }
+
+      const text = messageInput.value.trim();
+
+      if (!text) {
+        messageInput.focus();
+        return;
+      }
+
+      if (text.length > 10000) {
+        toast("Message is too long.");
+        return;
+      }
+
+      const sent = sendPacket({
+        type: "chat",
+        text,
+        // This field is informational only; receiver displays both types.
+        ghost: !!ghost,
+        timestamp: Date.now()
+      });
+
+      if (!sent) return;
+
+      if (!ghost) {
+        addMessage({
+          text,
+          mine: true,
+          time: formatTime()
+        });
+      }
+
+      messageInput.value = "";
+      messageInput.focus();
+    }
+
+    messageForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      sendMessage(false);
+    });
+
+    ghostSendBtn.addEventListener("click", () => {
+      sendMessage(true);
+    });
+
+    messageInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+
+        if (!sendBtn.disabled) {
+          sendMessage(false);
+        }
+      }
+    });
+
+    clearChatBtn.addEventListener("click", () => {
+      // Clear only this browser's rendered messages.
+      messages.querySelectorAll("[data-message-id]").forEach((node) => {
+        node.remove();
+      });
+
+      updateEmptyState();
+      toast("Your local chat was cleared.");
+    });
+
+    // -------------------------------------------------------
+    // AUDIO / VIDEO CALLS
+    // -------------------------------------------------------
+
+    function getMediaConstraints(type) {
+      return {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: type === "video"
+          ? { facingMode: "user" }
+          : false
+      };
+    }
+
+    async function acquireMedia(type) {
+      if (!navigator.mediaDevices ||
+          !navigator.mediaDevices.getUserMedia) {
+        throw new Error(
+          "Camera and microphone access requires HTTPS or localhost."
+        );
+      }
+
+      return navigator.mediaDevices.getUserMedia(
+        getMediaConstraints(type)
+      );
+    }
+
+    function validateCallConnection() {
+      if (!peer || !peer.open) {
+        toast("PeerJS is not ready.");
+        return false;
+      }
+
+      if (!dataConnection || !dataConnection.open ||
+          !connectedPeerId) {
+        toast("Connect to a peer first.");
+        return false;
+      }
+
+      if (currentCall) {
+        toast("A call is already active.");
+        return false;
+      }
+
+      return true;
+    }
+
+    async function startCall(type) {
+      if (!validateCallConnection()) return;
+
+      const targetId = connectedPeerId;
+
+      try {
+        callStatus.textContent = "Requesting media permissions…";
+        callPanel.classList.remove("hidden");
+
+        const stream = await acquireMedia(type);
+
+        // The user might have ended or changed the connection while the
+        // browser permission prompt was open.
+        if (!peer || !peer.open ||
+            !dataConnection || !dataConnection.open ||
+            connectedPeerId !== targetId || currentCall) {
+          stream.getTracks().forEach(track => track.stop());
+          callPanel.classList.add("hidden");
+          toast("Connection changed before the call could start.");
+          return;
+        }
+
+        localStream = stream;
+        activeCallType = type;
+
+        const call = peer.call(targetId, stream, {
+          metadata: { type }
+        });
+
+        if (!call) {
+          stopLocalStream();
+          resetCallUI();
+          toast("Could not create the call.");
+          return;
+        }
+
+        currentCall = call;
+        prepareCallUI(type, "Calling peer…");
+        bindCallEvents(call, type);
+      } catch (error) {
+        console.error("Unable to start call:", error);
+        stopLocalStream();
+        resetCallUI();
+
+        toast(error.message ||
+          "Unable to access your microphone or camera.");
+      }
+    }
+
+    videoCallBtn.addEventListener("click", () => startCall("video"));
+    audioCallBtn.addEventListener("click", () => startCall("audio"));
+
+    async function handleIncomingCall(call) {
+      if (!call) return;
+
+      // Calls from an unexpected peer are rejected.
+      if (!connectedPeerId || call.peer !== connectedPeerId) {
+        call.close();
+        return;
+      }
+
+      // Reject simultaneous or duplicate incoming calls.
+      if (currentCall) {
+        call.close();
+        return;
+      }
+
+      const type = call.metadata && call.metadata.type === "video"
+        ? "video"
+        : "audio";
+
+      try {
+        currentCall = call;
+        activeCallType = type;
+
+        prepareCallUI(type, "Incoming call — requesting media access…");
+
+        const stream = await acquireMedia(type);
+
+        // Ensure the call has not been closed while permission was requested.
+        if (currentCall !== call || call.open === false) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        localStream = stream;
+
+        // Automatically answer the incoming call.
+        call.answer(stream);
+        prepareCallUI(type, "Answering incoming call…");
+        bindCallEvents(call, type);
+      } catch (error) {
+        console.error("Could not answer incoming call:", error);
+
+        if (currentCall === call) {
+          try { call.close(); } catch (_) {}
+          finishCall(false);
+        }
+
+        toast(error.message ||
+          "Could not access the microphone or camera to answer.");
+      }
+    }
+
+    function prepareCallUI(type, status) {
+      activeCallType = type;
+      callPanel.classList.remove("hidden");
+      callStatus.textContent = status;
+
+      const video = type === "video";
+
+      videoGrid.classList.toggle("hidden", !video);
+      remoteTile.classList.toggle("hidden", !video);
+      localTile.classList.toggle("hidden", !video);
+      audioOnlyNotice.classList.toggle("hidden", video);
+
+      remoteAudio.classList.toggle("hidden", video);
+
+      videoCallBtn.disabled = true;
+      audioCallBtn.disabled = true;
+
+      if (localStream) {
+        localVideo.srcObject = localStream;
+        localVideo.play().catch(() => {});
+      }
+    }
+
+    function bindCallEvents(call, type) {
+      call.on("stream", (stream) => {
+        if (currentCall !== call) return;
+
+        remoteStream = stream;
+
+        if (type === "video") {
+          remoteVideo.srcObject = stream;
+          remoteVideo.play().catch((error) => {
+            console.warn("Remote video autoplay was blocked:", error);
+          });
+        } else {
+          remoteAudio.srcObject = stream;
+          remoteAudio.play().catch((error) => {
+            console.warn("Remote audio autoplay was blocked:", error);
+            toast("Tap the page if your browser blocks audio playback.");
+          });
+        }
+
+        callStatus.textContent = "Call connected";
+      });
+
+      call.on("close", () => {
+        if (currentCall === call) {
+          finishCall(false);
+        }
+      });
+
+      call.on("error", (error) => {
+        console.error("Call error:", error);
+
+        if (currentCall === call) {
+          finishCall(false);
+        }
+
+        toast("The call encountered a connection error.");
+      });
+    }
+
+    function stopLocalStream() {
+      if (localStream) {
+        localStream.getTracks().forEach((track) => {
+          try { track.stop(); } catch (_) {}
+        });
+      }
+
+      localStream = null;
+      localVideo.srcObject = null;
+    }
+
+    function finishCall(closeRemote = true) {
+      const call = currentCall;
+
+      // Clear state first so close events cannot cause repeated cleanup.
+      currentCall = null;
+      activeCallType = null;
+
+      if (closeRemote && call) {
+        try { call.close(); } catch (_) {}
+      }
+
+      stopLocalStream();
+
+      if (remoteStream) {
+        // Do not stop a remote track that could be shared elsewhere.
+        remoteStream = null;
+      }
+
+      remoteVideo.srcObject = null;
+      remoteAudio.srcObject = null;
+
+      isMicMuted = false;
+      isCameraOff = false;
+
+      micBtn.textContent = "Mute mic";
+      cameraBtn.textContent = "Turn camera off";
+
+      resetCallUI();
+      setConnectedUI(!!(dataConnection && dataConnection.open));
+    }
+
+    function resetCallUI() {
+      callPanel.classList.add("hidden");
+      videoGrid.classList.remove("hidden");
+      remoteTile.classList.remove("hidden");
+      localTile.classList.remove("hidden");
+      audioOnlyNotice.classList.add("hidden");
+      remoteAudio.classList.add("hidden");
+
+      callStatus.textContent = "";
+      localVideo.srcObject = null;
+      remoteVideo.srcObject = null;
+      remoteAudio.srcObject = null;
+    }
+
+    endCallBtn.addEventListener("click", () => {
+      finishCall(true);
+      toast("Call ended.");
+    });
+
+    // -------------------------------------------------------
+    // MICROPHONE / CAMERA CONTROLS
+    // -------------------------------------------------------
+
+    micBtn.addEventListener("click", () => {
+      if (!localStream) return;
+
+      const tracks = localStream.getAudioTracks();
+
+      if (!tracks.length) {
+        toast("No microphone track is available.");
+        return;
+      }
+
+      isMicMuted = !isMicMuted;
+
+      tracks.forEach(track => {
+        track.enabled = !isMicMuted;
+      });
+
+      micBtn.textContent = isMicMuted ? "Unmute mic" : "Mute mic";
+    });
+
+    cameraBtn.addEventListener("click", () => {
+      if (!localStream || activeCallType !== "video") {
+        toast("Camera controls are available during video calls.");
+        return;
+      }
+
+      const tracks = localStream.getVideoTracks();
+
+      if (!tracks.length) {
+        toast("No camera track is available.");
+        return;
+      }
+
+      isCameraOff = !isCameraOff;
+
+      tracks.forEach(track => {
+        track.enabled = !isCameraOff;
+      });
+
+      cameraBtn.textContent = isCameraOff
+        ? "Turn camera on"
+        : "Turn camera off";
+    });
+
+    // -------------------------------------------------------
+    // CLEANUP
+    // -------------------------------------------------------
+
+    window.addEventListener("beforeunload", () => {
+      // No chat history is persisted. Release local devices and connections.
+      if (currentCall) {
+        try { currentCall.close(); } catch (_) {}
+      }
+
+      stopLocalStream();
+
+      if (dataConnection) {
+        try { dataConnection.close(); } catch (_) {}
+      }
+
+      if (peer) {
+        try { peer.destroy(); } catch (_) {}
+      }
+    });
+
+  </script>
+</body>
+</html>
