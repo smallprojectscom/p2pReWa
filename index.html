@@ -122,6 +122,19 @@
     #toast {
       transition: opacity .2s;
     }
+
+    /* Mobile Safari / Android touch and safe-area improvements. */
+    button, input, textarea { touch-action: manipulation; }
+    input, textarea, button { font: inherit; }
+    input, textarea { font-size: 16px; } /* Prevents iOS Safari auto-zoom. */
+    body { min-height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
+    #messages { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+    video { -webkit-transform: translateZ(0); }
+    @media (max-width: 640px) {
+      .btn { min-height: 44px; }
+      #callPanel video { max-height: 42vh; }
+      #messageInput { min-height: 72px; }
+    }
   </style>
 </head>
 
@@ -203,14 +216,15 @@
           <section class="glass rounded-2xl p-5">
             <h2 class="font-semibold text-lg">Your identity</h2>
             <p class="text-sm text-slate-400 mt-1">
-              Share your Peer ID with the person you want to contact.
+              Share your six-digit code with the person you want to contact.
             </p>
 
             <div class="mt-4">
               <label class="text-xs text-slate-400 block mb-2">YOUR PEER ID</label>
               <div class="flex gap-2">
                 <input id="myPeerId" class="field text-sm min-w-0"
-                  readonly placeholder="Generating ID…">
+                  readonly inputmode="numeric" autocomplete="off"
+                  aria-label="Your six-digit Peer code" placeholder="Generating code…">
                 <button id="copyIdBtn" class="btn secondary shrink-0"
                   type="button">Copy</button>
               </div>
@@ -220,8 +234,11 @@
               <label for="remotePeerId"
                 class="text-xs text-slate-400 block mb-2">CONNECT TO A PEER</label>
 
-              <input id="remotePeerId" class="field"
-                placeholder="Paste their Peer ID">
+              <input id="remotePeerId" class="field" type="text"
+                inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                minlength="6" autocomplete="off" autocapitalize="off" spellcheck="false"
+                aria-label="Enter the other person's six-digit Peer code"
+                placeholder="Enter 6-digit code">
 
               <button id="connectBtn" class="btn primary w-full mt-3"
                 type="button" disabled>
@@ -305,9 +322,9 @@
             <h3 class="font-medium text-indigo-300 text-sm">Session privacy</h3>
             <p class="text-xs leading-5 text-slate-400 mt-2">
               Chat messages are held in page memory only. Refreshing or
-              closing the page clears the displayed history. PeerJS signaling
-              and network infrastructure are still required to establish
-              connections.
+              closing the page clears displayed history. Six-digit codes are
+              easy to guess, so they are for convenience—not authentication.
+              PeerJS signaling is required; some networks also require a TURN relay.
             </p>
           </section>
         </aside>
@@ -319,7 +336,7 @@
             <div>
               <h2 class="font-semibold text-lg">Messages</h2>
               <p id="chatSubtitle" class="text-sm text-slate-400 mt-1">
-                Connect to someone to start chatting.
+                Enter the other person’s six-digit code to start chatting.
               </p>
             </div>
             <button id="clearChatBtn" type="button"
@@ -486,7 +503,7 @@
 
       chatSubtitle.textContent = ready
         ? "Connected securely through a peer data channel."
-        : "Connect to someone to start chatting.";
+        : "Enter the other person’s six-digit code to start chatting.";
 
       if (ready) {
         setPeerStatus("Peer connected", true);
@@ -552,6 +569,11 @@
     // PEERJS INITIALIZATION
     // -------------------------------------------------------
 
+    function generatePeerId() {
+      // PeerJS IDs are strings, but this app intentionally uses six digits only.
+      return String(Math.floor(100000 + Math.random() * 900000));
+    }
+
     function initializePeer() {
       if (typeof Peer === "undefined") {
         setPeerStatus("Library unavailable");
@@ -563,77 +585,117 @@
       }
 
       setPeerStatus("Initializing…");
-      setConnectionMessage("Generating your Peer ID…");
+      setConnectionMessage("Generating your 6-digit code…");
+      connectBtn.disabled = true;
 
-      try {
-        // PeerJS uses its public signaling infrastructure by default.
-        // This application does not operate its own signaling server.
-        peer = new Peer(undefined, {
-          debug: 1
-        });
+      // A six-digit namespace has only 900,000 possible values (100000–999999).
+      // Retry when a generated code is already registered with the signaling server.
+      function createPeerAttempt(attempt = 0) {
+        if (attempt >= 10) {
+          setPeerStatus("Could not get code");
+          setConnectionMessage("Could not reserve a free code. Reload to try again.");
+          toast("Could not find an available 6-digit code. Please reload.");
+          return;
+        }
 
-        peer.on("open", (id) => {
-          myPeerId.value = id;
-          setPeerStatus("Ready to connect", false);
-          setConnectionMessage(
-            "Your ID is ready. Share it or enter another peer's ID."
-          );
-          connectBtn.disabled = false;
-        });
+        const candidateId = generatePeerId();
+        let handledIdCollision = false;
 
-        peer.on("connection", (connection) => {
-          handleDataConnection(connection);
-        });
-
-        peer.on("call", (call) => {
-          // Incoming calls are answered automatically after requesting
-          // the required microphone/camera permissions.
-          handleIncomingCall(call);
-        });
-
-        peer.on("disconnected", () => {
-          setPeerStatus("Signaling disconnected", false);
-          setConnectionMessage(
-            "Signaling disconnected. Attempting to reconnect…"
-          );
-
-          if (peer && !peer.destroyed) {
-            try {
-              peer.reconnect();
-            } catch (error) {
-              console.error("Peer reconnect failed:", error);
+        try {
+          // STUN helps peers discover direct network paths. Some networks still
+          // require a TURN relay; add a TURN provider here for maximum reliability.
+          peer = new Peer(candidateId, {
+            debug: 2,
+            config: {
+              iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                { urls: "stun:stun.cloudflare.com:3478" }
+              ]
             }
-          }
-        });
+          });
 
-        peer.on("close", () => {
-          setPeerStatus("Peer closed", false);
-        });
+          const thisPeer = peer;
 
-        peer.on("error", (error) => {
-          console.error("PeerJS error:", error);
+          thisPeer.on("open", (id) => {
+            if (peer !== thisPeer) return;
+            myPeerId.value = id;
+            setPeerStatus("Ready to connect", false);
+            setConnectionMessage(
+              "Your 6-digit code is ready. Share it or enter another person's code."
+            );
+            connectBtn.disabled = false;
+          });
 
-          const messagesByType = {
-            "peer-unavailable": "That Peer ID is unavailable.",
-            "network": "A network error occurred.",
-            "server-error": "The signaling server reported an error.",
-            "socket-error": "Signaling connection failed.",
-            "socket-closed": "The signaling connection was closed.",
-            "unavailable-id": "This Peer ID is already in use."
-          };
+          thisPeer.on("connection", (connection) => {
+            if (peer !== thisPeer) {
+              connection.close();
+              return;
+            }
+            handleDataConnection(connection);
+          });
 
-          const text = messagesByType[error.type] ||
-            (error.message || "An unexpected connection error occurred.");
+          thisPeer.on("call", (call) => {
+            if (peer !== thisPeer) {
+              call.close();
+              return;
+            }
+            handleIncomingCall(call);
+          });
 
-          setConnectionMessage(text);
-          toast(text);
-        });
+          thisPeer.on("disconnected", () => {
+            if (peer !== thisPeer) return;
+            setPeerStatus("Signaling disconnected", false);
+            setConnectionMessage(
+              "Signaling disconnected. Attempting to reconnect…"
+            );
+            if (!thisPeer.destroyed) {
+              try {
+                thisPeer.reconnect();
+              } catch (error) {
+                console.error("Peer reconnect failed:", error);
+              }
+            }
+          });
 
-      } catch (error) {
-        console.error("Peer initialization failed:", error);
-        setPeerStatus("Initialization failed");
-        setConnectionMessage("Could not initialize PeerJS.");
+          thisPeer.on("close", () => {
+            if (peer === thisPeer) setPeerStatus("Peer closed", false);
+          });
+
+          thisPeer.on("error", (error) => {
+            if (peer !== thisPeer) return;
+            console.error("PeerJS error:", error);
+
+            if (error.type === "unavailable-id" && !handledIdCollision) {
+              handledIdCollision = true;
+              setConnectionMessage("Code already in use. Generating another…");
+              try { thisPeer.destroy(); } catch (_) {}
+              peer = null;
+              window.setTimeout(() => createPeerAttempt(attempt + 1), 250);
+              return;
+            }
+
+            const messagesByType = {
+              "peer-unavailable": "That 6-digit code is not online. Ask them to reopen the app and share their current code.",
+              "network": "A network error occurred. Check your internet connection.",
+              "server-error": "The signaling server reported an error.",
+              "socket-error": "Signaling connection failed.",
+              "socket-closed": "The signaling connection was closed.",
+              "unavailable-id": "That code is already in use. Generating another code…"
+            };
+
+            const message = messagesByType[error.type] ||
+              (error.message || "An unexpected connection error occurred.");
+            setConnectionMessage(message);
+            toast(message);
+          });
+        } catch (error) {
+          console.error("Peer initialization failed:", error);
+          setPeerStatus("Initialization failed");
+          setConnectionMessage("Could not initialize PeerJS. Please reload.");
+        }
       }
+
+      createPeerAttempt();
     }
 
     // -------------------------------------------------------
@@ -648,8 +710,8 @@
 
       const targetId = remotePeerId.value.trim();
 
-      if (!targetId) {
-        toast("Enter the other person's Peer ID.");
+      if (!/^[0-9]{6}$/.test(targetId)) {
+        toast("Enter a valid 6-digit numeric code.");
         remotePeerId.focus();
         return;
       }
@@ -696,6 +758,12 @@
     }
 
     connectBtn.addEventListener("click", connectToPeer);
+
+    remotePeerId.addEventListener("input", () => {
+      const digitsOnly = remotePeerId.value.replace(/\D/g, "").slice(0, 6);
+      if (remotePeerId.value !== digitsOnly) remotePeerId.value = digitsOnly;
+      connectBtn.setAttribute("aria-label", "Connect to 6-digit peer code");
+    });
 
     remotePeerId.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -947,7 +1015,7 @@
           autoGainControl: true
         },
         video: type === "video"
-          ? { facingMode: "user" }
+          ? { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } }
           : false
       };
     }
